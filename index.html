@@ -642,13 +642,13 @@ function vSel() {
   var g = function (z, t) { return c(function (r) { return str(r[5]) === z && str(r[6]) === t; }); }, has = R.some(function (r) { return st(r); });
   var inR = c(function (r) { return st(r) === L[0]; }), outR = c(function (r) { return st(r) === L[1]; }), rs = c(function (r) { return st(r) === L[2] || st(r) === L[3]; }), real = inR + outR;
   var assigned = D.main.filter(function (r) { return S(r); }).length, info = D.selInfo || {};
-  var fresh = mount('<section class="card"><h2>ขั้นที่ 1 · คัดเลือกผู้เข้าสอบ</h2><div class="muted" id="selc"></div>' +
+  var fresh = mount('<div id="impc"></div><section class="card"><h2>ขั้นที่ 1 · คัดเลือกผู้เข้าสอบ</h2><div class="muted" id="selc"></div>' +
     '<div class="row"><label>โควต้าในเขต <input id="qin" type="number" min="0" style="width:6em"></label><label>โควต้านอกเขต <input id="qout" type="number" min="0" style="width:6em"></label>' +
     '<button class="pri" data-do="select">เรียงคะแนนและคัดเลือก</button></div>' +
     '<div class="muted">เกณฑ์: ความสามารถพิเศษก่อน แล้วทั่วไป (ในเขต/นอกเขตแยกกัน) · คะแนนเท่ากันดู รวม → S3 → S2 → S4 → S1 → S5 · ถ้าในเขตสมัครไม่ครบ ดึงนอกเขตทั่วไปมาเติม</div></section>' +
     '<div id="selm" style="display:grid;gap:14px"></div>' +
     '<section class="card"><div class="tools fil sticky" id="f1"><span class="fb" id="f1b"></span><input id="q1" placeholder="ค้นหาชื่อ / เลขที่สมัคร" style="flex:1;min-width:180px"></div><div class="list" id="l1"></div></section>');
-  if (fresh) { $('qin').value = D.qIn; $('qout').value = D.qOut; $('q1').value = F1.q; }
+  if (fresh) { $('qin').value = D.qIn; $('qout').value = D.qOut; $('q1').value = F1.q; impRender(); }
   $('selc').innerHTML = 'ผู้สมัครทั้งหมด <b>' + R.length + '</b> คน · ในเขต: ความสามารถพิเศษ ' + g(CFG.zi, CFG.ts) + ' ทั่วไป ' + g(CFG.zi, CFG.tg) + ' · นอกเขต: ความสามารถพิเศษ ' + g(CFG.zo, CFG.ts) + ' ทั่วไป ' + g(CFG.zo, CFG.tg);
   $('selm').innerHTML = has ? '<section class="stats"><div class="stat ok"><b>' + inR + '<small class="muted"> / ' + D.qIn + '</small></b><span>ตัวจริงในเขต</span></div>' +
     '<div class="stat ok"><b>' + outR + '<small class="muted"> / ' + D.qOut + '</small></b><span>ตัวจริงนอกเขต' + (info.drafted ? ' (รวมดึงมาเติมในเขต ' + info.drafted + ')' : '') + '</span></div>' +
@@ -1485,6 +1485,79 @@ addEventListener('keydown', function (e) { if (e.key === 'Escape' && $('prv').cl
 document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible' && READY) { if (DQ.length) dpump(); else if (V === 'doc' && Date.now() - DLAST > 30000) dload(false); } });
 addEventListener('online', function () { if (DQ.length) dpump(); });
 setInterval(function () { if (V === 'doc' && READY && !PAUSED && !DQ.length && document.visibilityState === 'visible' && !$('prv').classList.contains('on')) dload(false); }, 20000);
+
+/* ===================== 1) นำเข้าผู้สมัคร + คะแนน จากระบบสอบคัดเลือก ===================== */
+var IMP = { busy: '', prev: null, err: '', src: '' };
+function impList(title, arr, open) {
+  return arr && arr.length ? '<details' + (open ? ' open' : '') + '><summary>' + title + '</summary><div class="muted" style="font-size:15px;max-height:220px;overflow:auto">' + arr.map(function (x) { return esc(Array.isArray(x) ? x.filter(Boolean).join(' · ') : x); }).join('<br>') + '</div></details>' : '';
+}
+function impSummary(P) {
+  var other = Object.keys(P.otherTypes || {}).map(function (k) { return k + ' ' + P.otherTypes[k]; }).join(' · ');
+  var h = '<div class="muted">แหล่งข้อมูล: <b>' + esc(P.srcName) + '</b>' + (P.year ? ' · ปีการศึกษา ' + esc(P.year) : '') + ' · ส่งต่อเฉพาะประเภท <b>' + esc((P.send || []).join(', ')) + '</b>' + (other ? ' (ไม่รวม ' + esc(other) + ')' : '') + '</div>';
+  h += '<section class="stats">' +
+    '<div class="stat ok"><b>' + P.n + '</b><span>นำเข้าได้<br>ในเขต ' + P.zi + ' · นอกเขต ' + P.zo + (P.special ? ' · ความสามารถพิเศษ ' + P.special : '') + '</span></div>' +
+    '<div class="stat' + (P.absent.length ? ' warn' : '') + '"><b>' + P.absent.length + '</b><span>ขาดสอบ (ไม่นำเข้า)</span></div>' +
+    '<div class="stat"><b>' + (P.stats.n ? P.stats.mean : '–') + '</b><span>คะแนนรวมเฉลี่ย<br>SD ' + P.stats.sd + ' · ต่ำสุด ' + P.stats.min + ' · สูงสุด ' + P.stats.max + '</span></div>' +
+    (P.zoneMap ? '<div class="stat"><b>' + P.zoneMap + '</b><span>เขต "ต่างจังหวัด"<br>นับเป็นนอกเขต</span></div>' : '') + '</section>';
+  if (P.block.length) {
+    h += '<div class="hint bad"><b>ยังนำเข้าไม่ได้ — แก้ในชีตระบบสอบคัดเลือกแล้วกดตรวจอีกครั้ง</b><br>' + P.block.map(esc).join('<br>') + '</div>';
+    h += impList('ยังไม่มีคะแนน (' + P.nMissing + ' คน)', P.missing, true) + impList('คะแนนไม่ครบ / ไม่ใช่ตัวเลข', P.badScore, true) + impList('คะแนนซ้ำ (เลขที่)', P.dupScore, true) +
+      impList('เลขที่สมัครซ้ำในฐานข้อมูล', P.dupId, true) + impList('เขตอ่านไม่ออก', P.badZone, true) + impList('ประเภทย่อยอ่านไม่ออก', P.badType, true) + impList('กลุ่มการเรียนไม่ตรงกับสายในระบบ', P.badPref, true);
+  }
+  h += impList('รายชื่อผู้ขาดสอบที่ไม่นำเข้า (' + P.absent.length + ' คน)', P.absent);
+  if (P.absentNotInDb && P.absentNotInDb.length) h += '<div class="hint warn">แท็บขาดสอบมีเลขที่ที่ไม่อยู่ในฐานข้อมูล: ' + P.absentNotInDb.map(esc).join(', ') + ' — ตรวจว่าพิมพ์ถูกหรือไม่</div>';
+  if (P.extraScore) h += '<div class="muted">แท็บคะแนนมีเลขที่ที่ไม่อยู่ในรายชื่อนี้ ' + P.extraScore + ' รายการ (ไม่ใช้)</div>';
+  if (P.cur && P.cur.n) h += '<div class="hint warn">แท็บคัดเลือกผู้เข้าสอบตอนนี้มี ' + P.cur.n + ' คน' + (P.cur.picked ? ' (คัดเลือกแล้ว)' : '') + ' — นำเข้าแล้วจะแทนที่ทั้งหมด โดยเก็บของเดิมไว้ที่แท็บ "คัดเลือกผู้เข้าสอบ (ก่อนนำเข้า)"' +
+    (P.cur.main ? '<br>รายชื่อหลักในขั้นที่ 2 (' + P.cur.main + ' คน) ยังไม่เปลี่ยน จนกว่าจะกด "ส่งตัวจริงไปจัดสาย" ใหม่' : '') + '</div>';
+  h += '<div class="tools"><button class="pri" data-ix="apply"' + (P.block.length || IMP.busy ? ' disabled' : '') + '>นำเข้า ' + P.n + ' คน</button><span class="muted">หลังนำเข้า กด "เรียงคะแนนและคัดเลือก" ด้านล่างตามปกติ</span></div>';
+  return h;
+}
+function impRender() {
+  var e = $('impc'); if (!e) return;
+  var P = IMP.prev, fid = document.activeElement && document.activeElement.id;
+  var h = '<section class="card"><div class="row" style="justify-content:space-between"><h2>นำเข้าจากระบบสอบคัดเลือก</h2>' + (P || IMP.err ? '<button data-ix="close">ซ่อน</button>' : '') + '</div>' +
+    '<div class="muted">ดึงผู้สมัครประเภทที่ตั้ง "ส่งต่อระบบจัดสาย" พร้อมคะแนน S1–S5 · ไม่รวมผู้ขาดสอบ · โรงเรียนเดิมและเบอร์โทรไปใช้ในขั้นที่ 4 ประกาศผล</div>' +
+    '<div class="row"><input id="isrc" value="' + esc(IMP.src) + '" placeholder="ลิงก์ชีตระบบสอบคัดเลือก (เว้นว่าง = ใช้ชีตที่ตั้งไว้)" style="flex:1;min-width:220px">' +
+    '<button class="pri" data-ix="prev"' + (IMP.busy ? ' disabled' : '') + '>ตรวจข้อมูลก่อนนำเข้า</button></div>';
+  if (IMP.busy) h += '<div class="row"><div class="spin"></div> ' + esc(IMP.busy) + '</div>';
+  if (IMP.err) h += '<div class="hint bad">' + esc(IMP.err) + '</div>';
+  if (P) h += impSummary(P);
+  e.innerHTML = h + '</section>';
+  if (fid === 'isrc' && $('isrc')) $('isrc').focus();
+}
+function impPrev() {
+  if (IMP.busy) return;
+  IMP.src = ($('isrc') && $('isrc').value.trim()) || IMP.src; IMP.err = ''; IMP.busy = 'กำลังอ่านชีตระบบสอบคัดเลือก…'; impRender();
+  send({ a: 'docImpPrev', token: TOKEN, p: { src: IMP.src } }).then(function (r) {
+    IMP.busy = '';
+    if (r && r.ok) { IMP.prev = r.prev; IMP.src = r.prev.srcUrl || IMP.src; }
+    else if (r && r.code === 'AUTH') { PAUSED = true; showLogin('หมดเวลาเข้าสู่ระบบ กรุณาใส่รหัสผ่านอีกครั้ง'); return; }
+    else { IMP.prev = null; IMP.err = dErr(r); }
+    impRender();
+  }, function (e) { IMP.busy = ''; IMP.err = e.message; impRender(); });
+}
+function impApply() {
+  var P = IMP.prev; if (!P || P.block.length || IMP.busy) return;
+  if (Q.length || DQ.length) { toast('รอให้บันทึกรายการก่อนหน้าเสร็จก่อน แล้วค่อยนำเข้า', true); return; }
+  if (!confirm('นำเข้าผู้สมัคร ' + P.n + ' คน จาก "' + P.srcName + '" ?\n\n' + (P.cur && P.cur.n ? '• แทนที่รายชื่อเดิมในแท็บคัดเลือกผู้เข้าสอบ ' + P.cur.n + ' คน (มีสำรองเก็บไว้)\n' : '') +
+    '• ไม่รวมผู้ขาดสอบ ' + P.absent.length + ' คน\n• จากนั้นกด "เรียงคะแนนและคัดเลือก" ตามปกติ')) return;
+  IMP.busy = 'กำลังนำเข้า…'; IMP.err = ''; impRender();
+  send({ a: 'docImp', token: TOKEN, rid: rid(), p: { src: P.src, n: P.n, by: DBY } }).then(function (r) {
+    IMP.busy = '';
+    if (r && r.ok) { IMP.prev = null; toast('✓ ' + r.msg); DLAST = 0; F1.st = 'all'; F1.z = 'all'; reload(); }
+    else if (r && r.code === 'AUTH') { PAUSED = true; showLogin('หมดเวลาเข้าสู่ระบบ กรุณาใส่รหัสผ่านอีกครั้ง'); return; }
+    else IMP.err = dErr(r);
+    impRender();
+  }, function (e) { IMP.busy = ''; IMP.err = e.message + ' — กดตรวจข้อมูลอีกครั้งเพื่อดูว่านำเข้าแล้วหรือยัง'; impRender(); });
+}
+document.addEventListener('click', function (ev) {
+  var t = ev.target.closest('[data-ix]'); if (!t || t.disabled) return;
+  var x = t.dataset.ix;
+  if (x === 'prev') impPrev();
+  else if (x === 'apply') impApply();
+  else if (x === 'close') { IMP.prev = null; IMP.err = ''; impRender(); }
+});
+document.addEventListener('keydown', function (ev) { if (ev.key === 'Enter' && ev.target && ev.target.id === 'isrc') { ev.preventDefault(); impPrev(); } });
 
 window.__m1 = { q: function () { return Q.length; }, off: function () { return OFF; }, paused: function () { return PAUSED; }, state: function () { return D; }, dq: function () { return DQ.length; }, doc: function () { return DS; }, model: function () { return dModel(); } }; // สำหรับตรวจสอบระบบ
 /* ---------- เริ่มต้น ---------- */
